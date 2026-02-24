@@ -52,7 +52,6 @@ HTML = """
 
     <div id="board"></div>
 
-    <!-- Removed placeholder -->
     <input type="text" id="move" class="move-input" autofocus>
     <button onclick="sendMove()" class="button">Send</button>
     <button onclick="undoMove()" class="button">↩ Undo</button>
@@ -75,7 +74,12 @@ HTML = """
         // Initialize chess.js game and board
         var game = new Chess();
         var board = null;
-
+        function removeFocus() {
+    document.getElementById('move').blur();
+}
+document.getElementById('board').addEventListener('mousedown', function() {
+    removeFocus();
+});
         function onDragStart(source, piece, position, orientation) {
             // Do not allow moves if game is over or it's not the player's turn
             if (game.game_over()) return false;
@@ -130,62 +134,72 @@ HTML = """
         }
 
         function sendMoveToServer(moveSan) {
-            fetch('/send', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({move: moveSan})
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.valid) {
-                    // Update local game with the move
-                    game.move(data.move, { sloppy: true });
-                    updateBoard();
+    // First focus Lucas Chess
+    fetch('/focus', {method: 'POST'})
+    .then(() => {
+        // Then send the move
+        return fetch('/send', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({move: moveSan})
+        });
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.valid) {
+            // Update local game with the move
+            game.move(data.move, { sloppy: true });
+            updateBoard();
 
-                    document.getElementById('status').className = 'status success';
-                    document.getElementById('status').innerText = data.message;
+            document.getElementById('status').className = 'status success';
+            document.getElementById('status').innerText = data.message;
 
-                    // Ensure player is defined (fallback)
-                    const player = data.player || (game.turn() === 'w' ? 'black' : 'white');
-                    allMoves.push({
-                        move: data.move,
-                        by: player
-                    });
-                    updateHistory();
-                    document.getElementById('move').value = '';
-                } else {
-                    document.getElementById('status').className = 'status error';
-                    document.getElementById('status').innerText = data.message;
-                }
+            // Ensure player is defined (fallback)
+            const player = data.player || (game.turn() === 'w' ? 'black' : 'white');
+            allMoves.push({
+                move: data.move,
+                by: player
             });
+            updateHistory();
+            document.getElementById('move').value = '';
+        } else {
+            document.getElementById('status').className = 'status error';
+            document.getElementById('status').innerText = data.message;
         }
+    });
+}
 
-        function undoMove() {
-            fetch('/undo', {method: 'POST'})
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    // Undo local game moves (twice if server removed two)
-                    game.undo();
-                    if (data.also_remove) {
-                        game.undo();  // undo opponent's move too
-                    }
-                    updateBoard();
+function undoMove() {
+    // First focus Lucas Chess
+    fetch('/focus', {method: 'POST'})
+    .then(() => {
+        // Then send the undo command
+        return fetch('/undo', {method: 'POST'});
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Undo local game moves (twice if server removed two)
+            game.undo();
+            if (data.also_remove) {
+                game.undo();  // undo opponent's move too
+            }
+            updateBoard();
 
-                    document.getElementById('status').className = 'status success';
-                    document.getElementById('status').innerText = data.message;
+            document.getElementById('status').className = 'status success';
+            document.getElementById('status').innerText = data.message;
 
-                    allMoves.pop();  // Remove last move from history
-                    if (data.also_remove) {
-                        allMoves.pop();  // Remove opponent's move if needed
-                    }
-                    updateHistory();
-                } else {
-                    document.getElementById('status').className = 'status error';
-                    document.getElementById('status').innerText = data.message;
-                }
-            });
+            allMoves.pop();  // Remove last move from history
+            if (data.also_remove) {
+                allMoves.pop();  // Remove opponent's move if needed
+            }
+            updateHistory();
+        } else {
+            document.getElementById('status').className = 'status error';
+            document.getElementById('status').innerText = data.message;
         }
+    });
+}
 
         // Manual focus Lucas Chess window
         function focusLucas() {
@@ -329,10 +343,13 @@ class LucasChessController:
         return None
 
     def focus_lucas(self):
+        """Find and focus Lucas Chess window with better window detection"""
+
         def callback(hwnd, windows):
             if win32gui.IsWindowVisible(hwnd):
-                title = win32gui.GetWindowText(hwnd)
-                if 'Lucas' in title or 'Chess' in title:
+                title = win32gui.GetWindowText(hwnd).lower()
+                # More specific window title matching for Lucas Chess
+                if 'lucas' in title or ('chess' in title and 'lucas' in title) or 'lucas chess' in title:
                     windows.append(hwnd)
             return True
 
@@ -340,12 +357,36 @@ class LucasChessController:
         win32gui.EnumWindows(callback, windows)
 
         if windows:
-            hwnd = windows[0]
-            if win32gui.IsIconic(hwnd):
-                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            win32gui.SetForegroundWindow(hwnd)
-            time.sleep(0.5)
-            return True
+            # Try to find the most likely Lucas Chess window
+            target_hwnd = None
+            for hwnd in windows:
+                title = win32gui.GetWindowText(hwnd).lower()
+                if 'lucas chess' in title or 'lucas' in title:
+                    target_hwnd = hwnd
+                    break
+
+            if not target_hwnd and windows:
+                target_hwnd = windows[0]
+
+            if target_hwnd:
+                # Force foreground with multiple attempts
+                for _ in range(3):
+                    try:
+                        # If minimized, restore first
+                        if win32gui.IsIconic(target_hwnd):
+                            win32gui.ShowWindow(target_hwnd, win32con.SW_RESTORE)
+
+                        # Bring to foreground
+                        win32gui.SetForegroundWindow(target_hwnd)
+                        time.sleep(0.2)
+
+                        # Verify it worked
+                        if win32gui.GetForegroundWindow() == target_hwnd:
+                            return True
+                    except:
+                        pass
+                    time.sleep(0.1)
+
         return False
 
     def click_take_back(self):
