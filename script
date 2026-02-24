@@ -105,7 +105,18 @@ HTML = """
     <h2>♟️ Lucas Chess Remote</h2>
 
     <div id="board"></div>
-
+        <!-- Promotion Modal -->
+    <div id="promotionModal" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.3); z-index: 2000; text-align: center;">
+        <h3>Choose Promotion Piece</h3>
+        <div style="display: flex; gap: 10px; justify-content: center; margin-top: 15px;">
+            <button onclick="promotePiece('q')" style="padding: 10px; font-size: 24px;">♕</button>
+            <button onclick="promotePiece('r')" style="padding: 10px; font-size: 24px;">♖</button>
+            <button onclick="promotePiece('b')" style="padding: 10px; font-size: 24px;">♗</button>
+            <button onclick="promotePiece('n')" style="padding: 10px; font-size: 24px;">♘</button>
+        </div>
+        <button onclick="cancelPromotion()" style="margin-top: 15px; padding: 5px 15px;">Cancel</button>
+    </div>
+    <div id="modalOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5;); z-index: 1999;" onclick="cancelPromotion()"></div>
    
     <button onclick="undoMove()" class="button">↩ Undo</button>
   
@@ -118,6 +129,7 @@ HTML = """
     </div>
 
     <script>
+    var pendingPromotion = null;
        // Move queue system to prevent rapid-fire moves
         var moveQueue = [];
         var isProcessingMove = false;
@@ -178,38 +190,88 @@ HTML = """
         // Initialize chess.js game and board
         var game = new Chess();
         var board = null;
-        function removeFocus() {
-    document.getElementById('move').blur();
+        
+    function onDragStart(source, piece, position, orientation) {
+    // Do not allow moves if game is over, it's not the player's turn, or we're processing a move
+    if (game.game_over()) return false;
+    if (isProcessingMove) return false;
+    if (pendingPromotion) return false; // Prevent dragging while promotion modal is open
+    
+    if ((game.turn() === 'w' && piece.search(/^b/) !== -1) ||
+        (game.turn() === 'b' && piece.search(/^w/) !== -1)) {
+        return false;
+    }
 }
-document.getElementById('board').addEventListener('mousedown', function() {
-    removeFocus();
-});
-              function onDragStart(source, piece, position, orientation) {
-            // Do not allow moves if game is over, it's not the player's turn, or we're processing a move
-            if (game.game_over()) return false;
-            if (isProcessingMove) return false; // Prevent dragging while move is processing
-            if ((game.turn() === 'w' && piece.search(/^b/) !== -1) ||
-                (game.turn() === 'b' && piece.search(/^w/) !== -1)) {
-                return false;
-            }
+
+     function onDrop(source, target) {
+    // Check if this is a pawn promotion move
+    var piece = game.get(source);
+    var isPromotion = false;
+    
+    if (piece && piece.type === 'p') {
+        // Check if pawn is moving to promotion rank
+        if ((piece.color === 'w' && target[1] === '8') || 
+            (piece.color === 'b' && target[1] === '1')) {
+            isPromotion = true;
         }
+    }
+    
+    if (isPromotion) {
+        // Store the move details and show promotion modal
+        pendingPromotion = {
+            from: source,
+            to: target,
+            piece: piece
+        };
+        document.getElementById('promotionModal').style.display = 'block';
+        document.getElementById('modalOverlay').style.display = 'block';
+        return 'snapback'; // Don't make the move yet
+    }
+    
+    // Regular move (not promotion)
+    return makeMoveWithPromotion(source, target, 'q'); // default queen for backward compatibility
+}
 
-        function onDrop(source, target) {
-            // See if the move is legal
-            var move = game.move({
-                from: source,
-                to: target,
-                promotion: 'q' // always promote to queen for simplicity
-            });
+// Make move with specified promotion piece
+function makeMoveWithPromotion(source, target, promotion) {
+    var move = game.move({
+        from: source,
+        to: target,
+        promotion: promotion
+    });
 
-            // Illegal move
-            if (move === null) return 'snapback';
+    if (move === null) return 'snapback';
 
-            // Move is legal – update board and send to server
-            updateBoard();
-            sendMoveToServer(move.san);
-        }
+    updateBoard();
+    
+    var moveSan = move.san;
+    
+    // Ensure castling notation is correct
+    if (moveSan === 'O-O' || moveSan === 'O-O-O') {
+        // Keep as is
+    } else if (moveSan === '0-0' || moveSan === '0-0-0') {
+        moveSan = moveSan.replace(/0/g, 'O');
+    }
+    
+    sendMoveToServer(moveSan);
+    return null;
+}
 
+// Handle promotion choice
+function promotePiece(piece) {
+    if (pendingPromotion) {
+        makeMoveWithPromotion(pendingPromotion.from, pendingPromotion.to, piece);
+        pendingPromotion = null;
+    }
+    document.getElementById('promotionModal').style.display = 'none';
+    document.getElementById('modalOverlay').style.display = 'none';
+}
+
+function cancelPromotion() {
+    pendingPromotion = null;
+    document.getElementById('promotionModal').style.display = 'none';
+    document.getElementById('modalOverlay').style.display = 'none';
+}
         function onSnapEnd() {
             board.position(game.fen());
         }
@@ -231,26 +293,34 @@ document.getElementById('board').addEventListener('mousedown', function() {
 
         // Move history display
         let allMoves = [];
+console.log('Initial allMoves:', allMoves);
 
-        function sendMove() {
-            const moveSan = document.getElementById('move').value.trim();
-            if (!moveSan) return;
-            sendMoveToServer(moveSan);
-        }
-
-                function sendMoveToServer(moveSan) {
-            queueMove(moveSan);
-        }
+            function sendMoveToServer(moveSan) {
+    // Ensure castling notation is correct before queueing
+    if (moveSan === 'O-O' || moveSan === 'O-O-O') {
+        // Already correct
+    } else if (moveSan === '0-0') {
+        moveSan = 'O-O';
+    } else if (moveSan === '0-0-0') {
+        moveSan = 'O-O-O';
+    } else if (moveSan.toLowerCase() === 'o-o') {
+        moveSan = 'O-O';
+    } else if (moveSan.toLowerCase() === 'o-o-o') {
+        moveSan = 'O-O-O';
+    }
+    queueMove(moveSan);
+}
         
-        function actuallySendMoveToServer(moveSan) {
-    // Focus Lucas Chess
+ function actuallySendMoveToServer(moveSan) {
+     // Clear any pending promotion
+    pendingPromotion = null;
+    document.getElementById('promotionModal').style.display = 'none';
+    document.getElementById('modalOverlay').style.display = 'none';
     fetch('/focus', {method: 'POST'})
     .then(() => {
-        // Small delay just for keyboard buffer to clear
         return new Promise(resolve => setTimeout(resolve, 50));
     })
     .then(() => {
-        // Send the move
         return fetch('/send', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -260,22 +330,22 @@ document.getElementById('board').addEventListener('mousedown', function() {
     .then(response => response.json())
     .then(data => {
         if (data.valid) {
-            game.move(data.move, { sloppy: true });
-            updateBoard();
             showSuccess(data.message);
             
-            const player = data.player || (game.turn() === 'w' ? 'black' : 'white');
-            allMoves.push({
-                move: data.move,
-                by: player
-            });
-            updateHistory();
-            
-            // Process next move immediately
-            processMoveQueue();
+            // **CRITICAL: Wait a moment for Lucas to update, then FULL SYNC**
+            setTimeout(() => {
+                fetch('/full_state').then(r => r.json()).then(state => {
+                    // Completely replace local state with server state
+                    game.load(state.fen);
+                    updateBoard();
+                    allMoves = state.history || [];
+                    updateHistory();
+                    processMoveQueue();
+                });
+            }, 500);
         } else {
             showError(data.message);
-            processMoveQueue(); // Still try next move
+            processMoveQueue();
         }
     })
     .catch(error => {
@@ -284,36 +354,28 @@ document.getElementById('board').addEventListener('mousedown', function() {
         processMoveQueue();
     });
 }
-
 function undoMove() {
     showProcessing('Undoing move...');
     
-    // First focus Lucas Chess
     fetch('/focus', {method: 'POST'})
     .then(() => {
         return new Promise(resolve => setTimeout(resolve, 50));
     })
     .then(() => {
-        // Then send the undo command
         return fetch('/undo', {method: 'POST'});
     })
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            // Undo local game moves (twice if server removed two)
-            game.undo();
-            if (data.also_remove) {
-                game.undo();  // undo opponent's move too
-            }
-            updateBoard();
-
-            showSuccess(data.message);
-
-            allMoves.pop();  // Remove last move from history
-            if (data.also_remove) {
-                allMoves.pop();  // Remove opponent's move if needed
-            }
-            updateHistory();
+            setTimeout(() => {
+                fetch('/full_state').then(r => r.json()).then(state => {
+                    game.load(state.fen);
+                    updateBoard();
+                    allMoves = state.history || [];
+                    updateHistory();
+                    showSuccess(data.message);
+                });
+            }, 500);
         } else {
             showError(data.message);
         }
@@ -322,32 +384,34 @@ function undoMove() {
         showError('Network error - check connection');
     });
 }
-       
+function updateHistory() {
+    const historyEl = document.getElementById('historyList');
+    if (allMoves.length === 0) {
+        historyEl.innerHTML = '<div>-</div>';
+    } else {
+        historyEl.innerHTML = allMoves.map((item, i) =>
+            `<div class="history-item ${item.player === 'white' ? 'white-move' : 'black-move'}">
+                ${i+1}. ${item.move} (${item.player})
+            </div>`
+        ).join('');
+    }
+}
 
-        function updateHistory() {
-            const historyEl = document.getElementById('historyList');
-            if (allMoves.length === 0) {
-                historyEl.innerHTML = '<div>-</div>';
-            } else {
-                historyEl.innerHTML = allMoves.map((item, i) =>
-                    `<div class="history-item ${item.by === 'white' ? 'white-move' : 'black-move'}">
-                        ${i+1}. ${item.move} (${item.by})
-                    </div>`
-                ).join('');
-            }
-        }
+function syncWithServer() {
+    fetch('/full_state').then(r=>r.json()).then(data => {
+        game.load(data.fen);
+        updateBoard();
+        allMoves = data.history || [];
+        updateHistory();
+        console.log('Board synced with server:', data.fen);
+    }).catch(error => {
+        console.error('Failed to sync board:', error);
+    });
+}
 
-        // Sync board from server on page load (in case of refresh)
-        fetch('/board').then(r=>r.json()).then(data => {
-            game.load(data.fen);
-            updateBoard();
-            allMoves = data.history || [];
-            updateHistory();
-        });
+// Sync on page load
+window.addEventListener('load', syncWithServer);
 
-        document.getElementById('move').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') sendMove();
-        });
     </script>
 </body>
 </html>
@@ -491,7 +555,7 @@ class LucasChessController:
             rect = win32gui.GetWindowRect(hwnd)
             center_x = (rect[0] + rect[2]) // 2
             center_y = (rect[1] + rect[3]) // 2
-            pyautogui.click(center_x + 250, center_y)
+            pyautogui.click(center_x + 340, center_y)
 
             return True
 
@@ -510,8 +574,8 @@ class LucasChessController:
             hwnd = windows[0]
             rect = win32gui.GetWindowRect(hwnd)
             x, y, w, h = rect
-            click_x = x + 220
-            click_y = y + 50
+            click_x = x + 230
+            click_y = y + 260
             pyautogui.click(click_x, click_y)
             time.sleep(1)
             return True
@@ -563,9 +627,17 @@ def home():
 def board_state():
     return jsonify({
         'fen': chess_game.current_fen(),
-        'history': chess_game.get_history()
+        'history': chess_game.get_history(),
+        'turn': 'white' if chess_game.board.turn == chess.WHITE else 'black'
     })
-
+@app.route('/full_state', methods=['GET'])
+def full_state():
+    """Return complete game state"""
+    return jsonify({
+        'fen': chess_game.current_fen(),
+        'history': chess_game.get_history(),
+        'turn': 'white' if chess_game.board.turn == chess.WHITE else 'black'
+    })
 
 @app.route('/send', methods=['POST'])
 def send():
@@ -578,9 +650,8 @@ def send():
         'valid': success,
         'message': msg,
         'move': played_move,
-        'player': player  # Always defined on success
+        'player': player  # This is already correct from the server!
     })
-
 
 @app.route('/undo', methods=['POST'])
 def undo():
