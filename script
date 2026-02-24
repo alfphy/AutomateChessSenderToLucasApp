@@ -5,6 +5,7 @@ Sends legal moves to Lucas Chess via WiFi.
 """
 
 from flask import Flask, request, render_template_string, jsonify
+from flask import Flask, request, render_template_string, jsonify, send_from_directory
 import pyautogui
 import threading
 import time
@@ -27,10 +28,10 @@ HTML = """
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Chess Controller</title>
     <!-- chessboard.js CSS and JS -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css" />
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+    <link rel="stylesheet" href="/static/chessboard-1.0.0.min.css" />
+    <script src="/static/jquery-3.6.0.min.js"></script>
+    <script src="/static/chess.min.js"></script>
+    <script src="/static/chessboard-1.0.0.min.js"></script>
     <style>
         body { font-family: Arial; max-width: 600px; margin: 20px auto; padding: 10px; text-align: center; }
         /* Prevent scrolling when dragging pieces on touch devices */
@@ -662,6 +663,10 @@ def undo():
         'also_remove': also_remove
     })
 
+# Add this route to serve static files
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_from_directory('static', filename)
 
 @app.route('/focus', methods=['POST'])
 def focus():
@@ -694,6 +699,27 @@ if __name__ == '__main__':
         # Focus the window
         if lucas.focus_lucas():
             time.sleep(1)
+
+
+            # MAXIMIZE THE WINDOW
+            def callback(hwnd, windows):
+                if win32gui.IsWindowVisible(hwnd):
+                    title = win32gui.GetWindowText(hwnd)
+                    if 'Lucas Chess' in title:
+                        windows.append(hwnd)
+                return True
+
+
+            windows = []
+            win32gui.EnumWindows(callback, windows)
+
+            if windows:
+                hwnd = windows[0]
+                # Maximize the window (SW_MAXIMIZE = 3)
+                win32gui.ShowWindow(hwnd, 3)
+                time.sleep(0.5)
+                print("✅ Lucas Chess window maximized")
+
             # Press Escape to clear any menus
             pyautogui.press('esc')
             time.sleep(0.5)
@@ -702,8 +728,8 @@ if __name__ == '__main__':
             print("✅ Lucas Chess is now ready")
         else:
             print("⚠️ Please open Lucas Chess manually")
-    except:
-        print("⚠️ Could not prepare Lucas Chess automatically")
+    except Exception as e:
+        print(f"⚠️ Could not prepare Lucas Chess automatically: {e}")
 
     ip = get_ip()
     print("\n" + "=" * 50)
