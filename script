@@ -1,0 +1,482 @@
+#!/usr/bin/env python3
+"""
+Enhanced Chess Move Receiver with 2D Visual Board and Full Rule Validation
+Sends legal moves to Lucas Chess via WiFi.
+"""
+
+from flask import Flask, request, render_template_string, jsonify
+import pyautogui
+import threading
+import time
+import socket
+import win32gui
+import win32con
+import os
+import chess  # python-chess library for server-side validation
+
+app = Flask(__name__)
+
+# ----------------------------------------------------------------------
+# HTML Template with chessboard.js and chess.js
+# ----------------------------------------------------------------------
+HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Chess Controller</title>
+    <!-- chessboard.js CSS and JS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css" />
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+    <style>
+        body { font-family: Arial; max-width: 600px; margin: 20px auto; padding: 10px; text-align: center; }
+        /* Prevent scrolling when dragging pieces on touch devices */
+        #board { width: 400px; margin: 20px auto; touch-action: none; }
+        .move-input { font-size:24px; padding:10px; width:70%; margin-top:10px; }
+        .button { font-size:20px; padding:8px 16px; cursor: pointer; margin:5px; }
+        .status { font-size:18px; margin:15px 0; padding:10px; border-radius:5px; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        .history { margin-top: 20px; border:1px solid #ddd; border-radius:5px; padding:10px; text-align:left; }
+        .history-item { padding:3px; border-bottom:1px solid #eee; }
+        .white-move { color: #2c7a2c; font-weight:bold; }
+        .black-move { color: #7a2c2c; }
+    </style>
+</head>
+<body>
+    <h2>♟️ Lucas Chess Remote</h2>
+
+    <div id="board"></div>
+
+    <!-- Removed placeholder -->
+    <input type="text" id="move" class="move-input" autofocus>
+    <button onclick="sendMove()" class="button">Send</button>
+    <button onclick="undoMove()" class="button">↩ Undo</button>
+    <!-- Manual focus button (optional) -->
+    <button onclick="focusLucas()" class="button">🔍 Focus Lucas</button>
+
+    <div id="status" class="status info">Ready</div>
+
+    <div class="history">
+        <strong>Move History:</strong>
+        <div id="historyList"></div>
+    </div>
+
+    <script>
+        // Prevent scrolling while dragging on touch devices
+        document.getElementById('board').addEventListener('touchmove', function(e) {
+            e.preventDefault();
+        }, { passive: false });
+
+        // Initialize chess.js game and board
+        var game = new Chess();
+        var board = null;
+
+        function onDragStart(source, piece, position, orientation) {
+            // Do not allow moves if game is over or it's not the player's turn
+            if (game.game_over()) return false;
+            if ((game.turn() === 'w' && piece.search(/^b/) !== -1) ||
+                (game.turn() === 'b' && piece.search(/^w/) !== -1)) {
+                return false;
+            }
+        }
+
+        function onDrop(source, target) {
+            // See if the move is legal
+            var move = game.move({
+                from: source,
+                to: target,
+                promotion: 'q' // always promote to queen for simplicity
+            });
+
+            // Illegal move
+            if (move === null) return 'snapback';
+
+            // Move is legal – update board and send to server
+            updateBoard();
+            sendMoveToServer(move.san);
+        }
+
+        function onSnapEnd() {
+            board.position(game.fen());
+        }
+
+        var config = {
+            draggable: true,
+            position: 'start',
+            onDragStart: onDragStart,
+            onDrop: onDrop,
+            onSnapEnd: onSnapEnd,
+            pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
+        };
+        board = Chessboard('board', config);
+
+        // Keep board in sync with game
+        function updateBoard() {
+            board.position(game.fen());
+        }
+
+        // Move history display
+        let allMoves = [];
+
+        function sendMove() {
+            const moveSan = document.getElementById('move').value.trim();
+            if (!moveSan) return;
+            sendMoveToServer(moveSan);
+        }
+
+        function sendMoveToServer(moveSan) {
+            fetch('/send', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({move: moveSan})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.valid) {
+                    // Update local game with the move
+                    game.move(data.move, { sloppy: true });
+                    updateBoard();
+
+                    document.getElementById('status').className = 'status success';
+                    document.getElementById('status').innerText = data.message;
+
+                    // Ensure player is defined (fallback)
+                    const player = data.player || (game.turn() === 'w' ? 'black' : 'white');
+                    allMoves.push({
+                        move: data.move,
+                        by: player
+                    });
+                    updateHistory();
+                    document.getElementById('move').value = '';
+                } else {
+                    document.getElementById('status').className = 'status error';
+                    document.getElementById('status').innerText = data.message;
+                }
+            });
+        }
+
+        function undoMove() {
+            fetch('/undo', {method: 'POST'})
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Undo local game moves (twice if server removed two)
+                    game.undo();
+                    if (data.also_remove) {
+                        game.undo();  // undo opponent's move too
+                    }
+                    updateBoard();
+
+                    document.getElementById('status').className = 'status success';
+                    document.getElementById('status').innerText = data.message;
+
+                    allMoves.pop();  // Remove last move from history
+                    if (data.also_remove) {
+                        allMoves.pop();  // Remove opponent's move if needed
+                    }
+                    updateHistory();
+                } else {
+                    document.getElementById('status').className = 'status error';
+                    document.getElementById('status').innerText = data.message;
+                }
+            });
+        }
+
+        // Manual focus Lucas Chess window
+        function focusLucas() {
+            fetch('/focus', {method: 'POST'})
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('status').className = data.success ? 'status success' : 'status error';
+                document.getElementById('status').innerText = data.message;
+            });
+        }
+
+        function updateHistory() {
+            const historyEl = document.getElementById('historyList');
+            if (allMoves.length === 0) {
+                historyEl.innerHTML = '<div>-</div>';
+            } else {
+                historyEl.innerHTML = allMoves.map((item, i) =>
+                    `<div class="history-item ${item.by === 'white' ? 'white-move' : 'black-move'}">
+                        ${i+1}. ${item.move} (${item.by})
+                    </div>`
+                ).join('');
+            }
+        }
+
+        // Sync board from server on page load (in case of refresh)
+        fetch('/board').then(r=>r.json()).then(data => {
+            game.load(data.fen);
+            updateBoard();
+            allMoves = data.history || [];
+            updateHistory();
+        });
+
+        document.getElementById('move').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') sendMove();
+        });
+    </script>
+</body>
+</html>
+"""
+
+
+# ----------------------------------------------------------------------
+# Server-side Chess Logic (using python-chess)
+# ----------------------------------------------------------------------
+class ChessGame:
+    def __init__(self):
+        self.board = chess.Board()
+        self.move_history = []  # list of {'move': san, 'player': 'white'/'black'}
+
+    def reset(self):
+        self.board.reset()
+        self.move_history.clear()
+
+    def make_move(self, san_str):
+        """Try to make a move in SAN format. Returns (success, san_move, player, error_msg)"""
+        try:
+            # Clean up the move string
+            san_str = san_str.strip()
+
+            # Handle castling
+            if san_str.lower() == 'o-o':
+                san_str = 'O-O'
+            elif san_str.lower() == 'o-o-o':
+                san_str = 'O-O-O'
+
+            # Parse the SAN move
+            move = self.board.parse_san(san_str)
+
+            # Double-check if move is legal
+            if move not in self.board.legal_moves:
+                return False, None, None, "Illegal move"
+
+            # Get the normalized SAN representation
+            san_move = self.board.san(move)
+
+            # Determine player before moving
+            player = 'white' if self.board.turn == chess.WHITE else 'black'
+
+            # Apply move
+            self.board.push(move)
+
+            # Record
+            self.move_history.append({
+                'move': san_move,
+                'player': player
+            })
+
+            return True, san_move, player, None
+
+        except chess.IllegalMoveError:
+            return False, None, None, "Illegal move"
+        except chess.InvalidMoveError:
+            return False, None, None, "Invalid move format"
+        except chess.AmbiguousMoveError:
+            return False, None, None, "Ambiguous move"
+        except Exception as e:
+            return False, None, None, str(e)
+
+    def undo(self):
+        """Undo last move. Returns (success, also_remove_flag, move_undone)"""
+        if not self.move_history:
+            return False, False, None
+
+        last = self.move_history.pop()
+        self.board.pop()
+
+        # In Lucas, clicking Take Back removes both sides' last moves
+        also_remove = False
+        if self.move_history:
+            # Also undo the previous move (opponent's) to match Lucas behaviour
+            self.move_history.pop()
+            self.board.pop()
+            also_remove = True
+
+        return True, also_remove, last['move']
+
+    def current_fen(self):
+        return self.board.fen()
+
+    def get_history(self):
+        return self.move_history
+
+
+# ----------------------------------------------------------------------
+# Lucas Chess Controller
+# ----------------------------------------------------------------------
+class LucasChessController:
+    def __init__(self, chess_game):
+        self.chess_game = chess_game
+        self.lucas_path = self.find_lucas_chess()
+
+    def find_lucas_chess(self):
+        paths = [
+            r"C:\Program Files\Lucas Chess\lucas.exe",
+            r"C:\Program Files (x86)\Lucas Chess\lucas.exe",
+            os.path.expanduser(r"~\AppData\Local\Programs\Lucas Chess\lucas.exe"),
+        ]
+        for path in paths:
+            if os.path.exists(path):
+                return path
+        return None
+
+    def focus_lucas(self):
+        def callback(hwnd, windows):
+            if win32gui.IsWindowVisible(hwnd):
+                title = win32gui.GetWindowText(hwnd)
+                if 'Lucas' in title or 'Chess' in title:
+                    windows.append(hwnd)
+            return True
+
+        windows = []
+        win32gui.EnumWindows(callback, windows)
+
+        if windows:
+            hwnd = windows[0]
+            if win32gui.IsIconic(hwnd):
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            win32gui.SetForegroundWindow(hwnd)
+            time.sleep(0.5)
+            return True
+        return False
+
+    def click_take_back(self):
+        if not self.focus_lucas():
+            return False
+
+        windows = []
+        win32gui.EnumWindows(lambda h, l: l.append(h) if (win32gui.IsWindowVisible(h) and (
+                    'Lucas' in win32gui.GetWindowText(h) or 'Chess' in win32gui.GetWindowText(h))) else True, windows)
+
+        if windows:
+            hwnd = windows[0]
+            rect = win32gui.GetWindowRect(hwnd)
+            x, y, w, h = rect
+            click_x = x + 220
+            click_y = y + 50
+            pyautogui.click(click_x, click_y)
+            time.sleep(1)
+            return True
+        return False
+
+    def play_move(self, san_str):
+        # First validate the move using chess_game
+        success, san_move, player, error = self.chess_game.make_move(san_str)
+        if not success:
+            return False, error or f"Illegal move: {san_str}", None, None
+
+        # Now send to Lucas Chess
+        if not self.focus_lucas():
+            return False, "Lucas Chess not found", san_move, player
+
+        time.sleep(1)
+        pyautogui.write(san_move)
+        pyautogui.press('enter')
+        return True, f"Played: {san_move}", san_move, player
+
+    def undo_last_move(self):
+        success, also_remove, move_undone = self.chess_game.undo()
+        if not success:
+            return False, "No moves to undo", False
+
+        if not self.focus_lucas():
+            return False, "Lucas Chess not found", False
+
+        if not self.click_take_back():
+            return False, "Could not click Take Back", False
+
+        return True, f"Undid: {move_undone}", also_remove
+
+
+# ----------------------------------------------------------------------
+# Flask Routes
+# ----------------------------------------------------------------------
+chess_game = ChessGame()
+lucas = LucasChessController(chess_game)
+
+
+@app.route('/')
+def home():
+    return HTML
+
+
+@app.route('/board', methods=['GET'])
+def board_state():
+    return jsonify({
+        'fen': chess_game.current_fen(),
+        'history': chess_game.get_history()
+    })
+
+
+@app.route('/send', methods=['POST'])
+def send():
+    san_str = request.get_json().get('move', '').strip()
+    if not san_str:
+        return jsonify({'valid': False, 'message': 'No move provided'})
+
+    success, msg, played_move, player = lucas.play_move(san_str)
+    return jsonify({
+        'valid': success,
+        'message': msg,
+        'move': played_move,
+        'player': player  # Always defined on success
+    })
+
+
+@app.route('/undo', methods=['POST'])
+def undo():
+    success, msg, also_remove = lucas.undo_last_move()
+    return jsonify({
+        'success': success,
+        'message': msg,
+        'also_remove': also_remove
+    })
+
+
+@app.route('/focus', methods=['POST'])
+def focus():
+    success = lucas.focus_lucas()
+    if success:
+        return jsonify({'success': True, 'message': 'Lucas Chess focused'})
+    else:
+        return jsonify({'success': False, 'message': 'Lucas Chess window not found'})
+
+
+def get_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return "192.168.1.xxx"
+
+
+if __name__ == '__main__':
+    ip = get_ip()
+    print("\n" + "=" * 50)
+    print("CHESS CONTROLLER WITH VISUAL BOARD")
+    print("=" * 50)
+    print(f"\nOpen this URL on your phone/tablet: http://{ip}:5000")
+    print("\nYou can now:")
+    print("  • Drag pieces on the board (scrolling disabled)")
+    print("  • Type moves in SAN format (e.g., e4, Nf3, O-O, exd5)")
+    print("  • All moves are validated with full chess rules")
+    print("  • Legal moves are sent to Lucas Chess automatically")
+    print("  • Use 'Focus Lucas' button to manually bring window to front")
+    print("\nPress Ctrl+C to stop")
+    print("=" * 50)
+
+    if lucas.lucas_path:
+        print(f"\nLucas Chess found at: {lucas.lucas_path}")
+
+    app.run(host='0.0.0.0', port=5000, debug=False)
