@@ -25,76 +25,241 @@ HTML = """
 <html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chess Controller</title>
     <!-- chessboard.js CSS and JS -->
     <link rel="stylesheet" href="/static/chessboard-1.0.0.min.css" />
+    
     <script src="/static/jquery-3.6.0.min.js"></script>
     <script src="/static/chess.min.js"></script>
     <script src="/static/chessboard-1.0.0.min.js"></script>
     <style>
-        body { font-family: Arial; max-width: 600px; margin: 20px auto; padding: 10px; text-align: center; }
-        /* Prevent scrolling when dragging pieces on touch devices */
-        #board { width: 400px; margin: 20px auto; touch-action: none; }
-        .move-input { font-size:24px; padding:10px; width:70%; margin-top:10px; }
-        .button { font-size:20px; padding:8px 16px; cursor: pointer; margin:5px; }
-        .status { font-size:18px; margin:15px 0; padding:10px; border-radius:5px; }
-        .success { background: #d4edda; color: #155724; }
-        .error { background: #f8d7da; color: #721c24; }
-        .info { background: #d1ecf1; color: #0c5460; }
-        .history { margin-top: 20px; border:1px solid #ddd; border-radius:5px; padding:10px; text-align:left; }
-        .history-item { padding:3px; border-bottom:1px solid #eee; }
-        .white-move { color: #2c7a2c; font-weight:bold; }
-        .black-move { color: #7a2c2c; }
-           .processing-bar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            background: linear-gradient(90deg, #3498db, #9b59b6);
-            color: white;
-            text-align: center;
-            padding: 8px 0;
-            font-size: 16px;
-            font-weight: bold;
-            z-index: 1000;
-            transform: translateY(-100%);
-            transition: transform 0.3s ease;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-            pointer-events: none;
-        }
-        .processing-bar.show {
-            transform: translateY(0);
-        }
-        .processing-bar.processing {
-            animation: gradientShift 2s infinite;
-        }
-        @keyframes gradientShift {
-            0% { background: linear-gradient(90deg, #3498db, #9b59b6); }
-            50% { background: linear-gradient(90deg, #9b59b6, #3498db); }
-            100% { background: linear-gradient(90deg, #3498db, #9b59b6); }
-        }
-        .board-dim {
-            opacity: 0.7;
-            transition: opacity 0.3s;
-            pointer-events: none;
-        }
-        .status.processing {
-            background: #fff3cd;
-            color: #856404;
-            border: 1px solid #ffeeba;
-        }
-        .small-spinner {
-            display: inline-block;
-            width: 16px;
-            height: 16px;
-            border: 2px solid rgba(255,255,255,0.3);
-            border-top: 2px solid white;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-right: 8px;
-            vertical-align: middle;
-        }
+       <style>
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+    
+    html, body {
+        width: 100%;
+        height: 100%;
+        overflow-x: hidden;
+        font-family: Arial, sans-serif;
+    }
+    
+    body { 
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        padding: 10px;
+        text-align: center;
+        background: #f5f5f5;
+    }
+    
+    /* Prevent scrolling when dragging pieces on touch devices */
+    #board { 
+        width: 100%;
+        
+        max-width: 500px;
+        margin: 10px auto; 
+        touch-action: none; 
+    }
+    /* Ensure board notation is behind pieces */
+#board .square {
+    position: relative;
+}
+
+#board .square span {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    color: rgba(0, 0, 0, 0.3);
+    z-index: 5;  
+    pointer-events: none; 
+    
+}
+#board .notation-322f9 {
+    font-size: 10px;
+}
+#board img {
+    position: relative;
+    z-index: 15; 
+    pointer-events: auto;
+}
+
+    .button { 
+        font-size: 20px; 
+        padding: 12px 24px; 
+        cursor: pointer; 
+        margin: 10px;
+        border: none;
+        border-radius: 8px;
+        background: #3498db;
+        color: white;
+        width: 200px;
+        align-self: center;
+    }
+    
+    .button:hover {
+        background: #2980b9;
+    }
+    
+    .status { 
+        font-size: 18px; 
+        margin: 15px 10px; 
+        padding: 15px; 
+        border-radius: 8px; 
+    }
+    
+    .success { 
+        background: #d4edda; 
+        color: #155724; 
+        border: 1px solid #c3e6cb;
+    }
+    
+    .error { 
+        background: #f8d7da; 
+        color: #721c24; 
+        border: 1px solid #f5c6cb;
+    }
+    
+    .info { 
+        background: #d1ecf1; 
+        color: #0c5460; 
+        border: 1px solid #bee5eb;
+    }
+    
+   .history { 
+    margin: 15px 10px; 
+    border: 1px solid #ddd; 
+    border-radius: 8px; 
+    padding: 15px; 
+    text-align: left; 
+    background: white;
+    flex: 1;
+    max-height: 200px;  
+    overflow-y: auto;    
+    overflow-x: hidden; 
+}
+    
+    .history-item { 
+        padding: 8px; 
+        border-bottom: 1px solid #eee; 
+        font-size: 16px;
+    }
+    
+    .white-move { 
+        color: #2c7a2c; 
+        font-weight: bold; 
+    }
+    
+    .black-move { 
+        color: #7a2c2c; 
+        font-weight: bold;
+    }
+    
+    .processing-bar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        background: linear-gradient(90deg, #3498db, #9b59b6);
+        color: white;
+        text-align: center;
+        padding: 12px 0;
+        font-size: 16px;
+        font-weight: bold;
+        z-index: 1000;
+        transform: translateY(-100%);
+        transition: transform 0.3s ease;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        pointer-events: none;
+    }
+    
+    .processing-bar.show {
+        transform: translateY(0);
+    }
+    
+    .processing-bar.processing {
+        animation: gradientShift 2s infinite;
+    }
+    
+    @keyframes gradientShift {
+        0% { background: linear-gradient(90deg, #3498db, #9b59b6); }
+        50% { background: linear-gradient(90deg, #9b59b6, #3498db); }
+        100% { background: linear-gradient(90deg, #3498db, #9b59b6); }
+    }
+    
+    .board-dim {
+        opacity: 0.7;
+        transition: opacity 0.3s;
+        pointer-events: none;
+    }
+    
+    .status.processing {
+        background: #fff3cd;
+        color: #856404;
+        border: 1px solid #ffeeba;
+    }
+    
+    .small-spinner {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid rgba(255,255,255,0.3);
+        border-top: 2px solid white;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-right: 8px;
+        vertical-align: middle;
+    }
+    
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    
+    h2 {
+        margin: 15px 0;
+        font-size: 24px;
+        color: #333;
+    }
+    
+    /* Promotion Modal */
+    #promotionModal {
+        background: white;
+        padding: 25px;
+        border-radius: 15px;
+        box-shadow: 0 5px 30px rgba(0,0,0,0.3);
+        width: 90%;
+        max-width: 400px;
+    }
+    
+    #promotionModal h3 {
+        margin-bottom: 20px;
+        color: #333;
+    }
+    
+    #promotionModal button {
+        padding: 15px 25px;
+        font-size: 32px;
+        border: 2px solid #ddd;
+        background: white;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    #promotionModal button:hover {
+        background: #f0f0f0;
+        border-color: #3498db;
+    }
+    
+    #modalOverlay {
+        background: rgba(0,0,0,0.7);
+    }
+</style>
     </style>
 </head>
 <body>
@@ -313,10 +478,20 @@ console.log('Initial allMoves:', allMoves);
 }
         
  function actuallySendMoveToServer(moveSan) {
-     // Clear any pending promotion
+    // Clear any pending promotion
     pendingPromotion = null;
     document.getElementById('promotionModal').style.display = 'none';
     document.getElementById('modalOverlay').style.display = 'none';
+    
+    // Final castling notation check before sending
+    if (moveSan === '0-0-0' || moveSan.toLowerCase() === 'o-o-o') {
+        moveSan = 'O-O-O';
+        console.log('Normalized queenside castling to:', moveSan);
+    } else if (moveSan === '0-0' || moveSan.toLowerCase() === 'o-o') {
+        moveSan = 'O-O';
+        console.log('Normalized kingside castling to:', moveSan);
+    }
+    
     fetch('/focus', {method: 'POST'})
     .then(() => {
         return new Promise(resolve => setTimeout(resolve, 50));
@@ -564,25 +739,19 @@ class LucasChessController:
         return False
 
     def click_take_back(self):
+        """Simply press backspace to undo a move"""
         if not self.focus_lucas():
             return False
 
-        windows = []
-        win32gui.EnumWindows(lambda h, l: l.append(h) if (win32gui.IsWindowVisible(h) and (
-                    'Lucas' in win32gui.GetWindowText(h) or 'Chess' in win32gui.GetWindowText(h))) else True, windows)
-
-        if windows:
-            hwnd = windows[0]
-            rect = win32gui.GetWindowRect(hwnd)
-            x, y, w, h = rect
-            click_x = x + 230
-            click_y = y + 260
-            pyautogui.click(click_x, click_y)
-            time.sleep(1)
-            return True
-        return False
+        # Just press backspace once
+        pyautogui.press('backspace')
+        time.sleep(0.5)  # Give Lucas Chess time to process
+        return True
 
     def play_move(self, san_str):
+        # Log the move being attempted
+        print(f"LucasController.play_move received: '{san_str}'")
+
         # First validate the move using chess_game
         success, san_move, player, error = self.chess_game.make_move(san_str)
         if not success:
@@ -592,12 +761,60 @@ class LucasChessController:
         if not self.focus_lucas():
             return False, "Lucas Chess not found", san_move, player
 
-        # Minimal delay - just enough for keyboard buffer
-        time.sleep(0.1)  # Reduced from 1.0 to 0.1
-        pyautogui.write(san_move)
-        pyautogui.press('enter')
+        time.sleep(0.2)
+
+        # Get window rectangle like in click_take_back
+        windows = []
+        win32gui.EnumWindows(lambda h, l: l.append(h) if (win32gui.IsWindowVisible(h) and (
+                'Lucas' in win32gui.GetWindowText(h) or 'Chess' in win32gui.GetWindowText(h))) else True, windows)
+
+        if windows:
+            hwnd = windows[0]
+            rect = win32gui.GetWindowRect(hwnd)
+            x, y, w, h = rect
+
+            # Handle castling moves - now using notation instead of mouse clicks
+            if san_move == 'O-O':
+                print("Sending kingside castling")
+                # For white kingside castling: ke1g1
+                # For black kingside castling: ke8g8
+                if player == 'white':
+                    pyautogui.write('ke1g1', interval=0.1)
+                else:
+                    pyautogui.write('ke8g8', interval=0.1)
+                time.sleep(0.1)
+                pyautogui.press('enter')
+
+            elif san_move == 'O-O-O':
+                print("Sending queenside castling")
+                # For white queenside castling: ke1c1
+                # For black queenside castling: ke8c8
+                if player == 'white':
+                    pyautogui.write('ke1c1', interval=0.1)
+                else:
+                    pyautogui.write('ke8c8', interval=0.1)
+                time.sleep(0.1)
+                pyautogui.press('enter')
+
         return True, f"Played: {san_move}", san_move, player
 
+    def get_mouse_coords(self):
+        """Print current mouse position - NO CLICKING"""
+        if not self.focus_lucas():
+            print("❌ Lucas Chess not found")
+            return False
+
+        print("\n🔍 MOUSE POSITION DISPLAY")
+        print("Move your mouse over Lucas Chess window")
+        print("Press Ctrl+C in terminal to stop\n")
+
+        try:
+            while True:
+                x, y = pyautogui.position()
+                print(f"\rMouse at: ({x}, {y})    ", end='', flush=True)
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            print("\n\n👋 Stopped")
     def undo_last_move(self):
         success, also_remove, move_undone = self.chess_game.undo()
         if not success:
@@ -640,18 +857,38 @@ def full_state():
         'turn': 'white' if chess_game.board.turn == chess.WHITE else 'black'
     })
 
+
 @app.route('/send', methods=['POST'])
 def send():
     san_str = request.get_json().get('move', '').strip()
     if not san_str:
         return jsonify({'valid': False, 'message': 'No move provided'})
 
+    # Convert any variant of castling to the standard Lucas format
+    original_san = san_str
+
+    # First, normalize the string for comparison
+    normalized = san_str.upper().replace('0', 'O')
+
+    # Handle queenside castling (O-O-O)
+    if normalized in ['O-O-O', 'OOO']:
+        san_str = 'O-O-O'
+        print(f"Castling queenside detected: {original_san} -> {san_str}")
+    # Handle kingside castling (O-O)
+    elif normalized in ['O-O', 'OO']:
+        san_str = 'O-O'
+        print(f"Castling kingside detected: {original_san} -> {san_str}")
+
     success, msg, played_move, player = lucas.play_move(san_str)
+
+    # Log what happened for debugging
+    print(f"Move sent: {san_str}, Success: {success}, Message: {msg}")
+
     return jsonify({
         'valid': success,
         'message': msg,
         'move': played_move,
-        'player': player  # This is already correct from the server!
+        'player': player
     })
 
 @app.route('/undo', methods=['POST'])
@@ -717,6 +954,8 @@ if __name__ == '__main__':
                 hwnd = windows[0]
                 # Maximize the window (SW_MAXIMIZE = 3)
                 win32gui.ShowWindow(hwnd, 3)
+                time.sleep(0.5)
+                pyautogui.press('f11')
                 time.sleep(0.5)
                 print("✅ Lucas Chess window maximized")
 
