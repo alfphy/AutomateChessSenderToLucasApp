@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Enhanced Chess Move Receiver with 2D Visual Board and Full Rule Validation
-Sends legal moves to Lucas Chess via WiFi.
+Sends legal moves to Lucas Chess via WiFi (UCI format for Lucas Chess)
 """
 
 from flask import Flask, request, render_template_string, jsonify
@@ -29,7 +29,7 @@ HTML = """
     <title>Chess Controller</title>
     <!-- chessboard.js CSS and JS -->
     <link rel="stylesheet" href="/static/chessboard-1.0.0.min.css" />
-    
+
     <script src="/static/jquery-3.6.0.min.js"></script>
     <script src="/static/chess.min.js"></script>
     <script src="/static/chessboard-1.0.0.min.js"></script>
@@ -40,14 +40,14 @@ HTML = """
         padding: 0;
         box-sizing: border-box;
     }
-    
+
     html, body {
         width: 100%;
         height: 100%;
         overflow-x: hidden;
         font-family: Arial, sans-serif;
     }
-    
+
     body { 
         min-height: 100vh;
         display: flex;
@@ -56,11 +56,11 @@ HTML = """
         text-align: center;
         background: #f5f5f5;
     }
-    
+
     /* Prevent scrolling when dragging pieces on touch devices */
     #board { 
         width: 100%;
-        
+
         max-width: 500px;
         margin: 10px auto; 
         touch-action: none; 
@@ -77,7 +77,7 @@ HTML = """
     color: rgba(0, 0, 0, 0.3);
     z-index: 5;  
     pointer-events: none; 
-    
+
 }
 #board .notation-322f9 {
     font-size: 10px;
@@ -100,36 +100,36 @@ HTML = """
         width: 200px;
         align-self: center;
     }
-    
+
     .button:hover {
         background: #2980b9;
     }
-    
+
     .status { 
         font-size: 18px; 
         margin: 15px 10px; 
         padding: 15px; 
         border-radius: 8px; 
     }
-    
+
     .success { 
         background: #d4edda; 
         color: #155724; 
         border: 1px solid #c3e6cb;
     }
-    
+
     .error { 
         background: #f8d7da; 
         color: #721c24; 
         border: 1px solid #f5c6cb;
     }
-    
+
     .info { 
         background: #d1ecf1; 
         color: #0c5460; 
         border: 1px solid #bee5eb;
     }
-    
+
    .history { 
     margin: 15px 10px; 
     border: 1px solid #ddd; 
@@ -142,23 +142,23 @@ HTML = """
     overflow-y: auto;    
     overflow-x: hidden; 
 }
-    
+
     .history-item { 
         padding: 8px; 
         border-bottom: 1px solid #eee; 
         font-size: 16px;
     }
-    
+
     .white-move { 
         color: #2c7a2c; 
         font-weight: bold; 
     }
-    
+
     .black-move { 
         color: #7a2c2c; 
         font-weight: bold;
     }
-    
+
     .processing-bar {
         position: fixed;
         top: 0;
@@ -176,33 +176,33 @@ HTML = """
         box-shadow: 0 2px 10px rgba(0,0,0,0.2);
         pointer-events: none;
     }
-    
+
     .processing-bar.show {
         transform: translateY(0);
     }
-    
+
     .processing-bar.processing {
         animation: gradientShift 2s infinite;
     }
-    
+
     @keyframes gradientShift {
         0% { background: linear-gradient(90deg, #3498db, #9b59b6); }
         50% { background: linear-gradient(90deg, #9b59b6, #3498db); }
         100% { background: linear-gradient(90deg, #3498db, #9b59b6); }
     }
-    
+
     .board-dim {
         opacity: 0.7;
         transition: opacity 0.3s;
         pointer-events: none;
     }
-    
+
     .status.processing {
         background: #fff3cd;
         color: #856404;
         border: 1px solid #ffeeba;
     }
-    
+
     .small-spinner {
         display: inline-block;
         width: 16px;
@@ -214,18 +214,18 @@ HTML = """
         margin-right: 8px;
         vertical-align: middle;
     }
-    
+
     @keyframes spin {
         0% { transform: rotate(0deg); }
         100% { transform: rotate(360deg); }
     }
-    
+
     h2 {
         margin: 15px 0;
         font-size: 24px;
         color: #333;
     }
-    
+
     /* Promotion Modal */
     #promotionModal {
         background: white;
@@ -235,12 +235,12 @@ HTML = """
         width: 90%;
         max-width: 400px;
     }
-    
+
     #promotionModal h3 {
         margin-bottom: 20px;
         color: #333;
     }
-    
+
     #promotionModal button {
         padding: 15px 25px;
         font-size: 32px;
@@ -250,12 +250,12 @@ HTML = """
         cursor: pointer;
         transition: all 0.2s;
     }
-    
+
     #promotionModal button:hover {
         background: #f0f0f0;
         border-color: #3498db;
     }
-    
+
     #modalOverlay {
         background: rgba(0,0,0,0.7);
     }
@@ -263,7 +263,7 @@ HTML = """
     </style>
 </head>
 <body>
-    
+
     <div class="processing-bar" id="processingBar">
         <span class="small-spinner" id="processingSpinner"></span>
         <span id="processingBarText">Processing move...</span>
@@ -283,9 +283,9 @@ HTML = """
         <button onclick="cancelPromotion()" style="margin-top: 15px; padding: 5px 15px;">Cancel</button>
     </div>
     <div id="modalOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5;); z-index: 1999;" onclick="cancelPromotion()"></div>
-   
+
     <button onclick="undoMove()" class="button">↩ Undo</button>
-  
+
 
     <div id="status" class="status info">Ready</div>
 
@@ -295,6 +295,62 @@ HTML = """
     </div>
 
     <script>
+    function ensureSyncAndMakeMove(source, target, promotion) {
+        if (source === target) {
+        return 'snapback';
+    }
+    fetch('/full_state').then(r => r.json()).then(state => {
+        if (game.fen() !== state.fen) {
+            console.log('Board out of sync! Syncing...');
+            game.load(state.fen);
+            updateBoard();
+        }
+        
+        // Create move options
+        var moveOptions = {
+            from: source,
+            to: target
+        };
+        
+        // Only add promotion if it's provided (for pawn promotions)
+        if (promotion) {
+            moveOptions.promotion = promotion;
+        }
+        
+        var move = game.move(moveOptions);
+
+        if (move === null) {
+            showError('Illegal move');
+            return 'snapback';
+        }
+
+        updateBoard();
+
+        var moveSan = move.san;
+        var moveUci = move.from + move.to;
+        
+        // Only add promotion to UCI if it's a promotion move
+        if (promotion) {
+            moveUci += promotion;
+        }
+
+        // Ensure castling notation is correct
+        if (moveSan === 'O-O' || moveSan === 'O-O-O') {
+            // Keep as is
+        } else if (moveSan === '0-0' || moveSan === '0-0-0') {
+            moveSan = moveSan.replace(/0/g, 'O');
+        }
+
+        queueMove({
+            san: moveSan,
+            uci: moveUci
+        });
+        return null;
+    }).catch(error => {
+        console.error('Failed to sync board:', error);
+        return 'snapback';
+    });
+}
     var pendingPromotion = null;
        // Move queue system to prevent rapid-fire moves
         var moveQueue = [];
@@ -307,19 +363,19 @@ HTML = """
             document.getElementById('status').className = 'status processing';
             document.getElementById('status').innerText = message;
         }
-        
+
         function hideProcessing() {
             document.getElementById('processingBar').classList.remove('show', 'processing');
             document.getElementById('board').classList.remove('board-dim');
             // Don't clear status here - let the move result show
         }
-        
+
         function showError(message) {
             document.getElementById('status').className = 'status error';
             document.getElementById('status').innerText = message;
             hideProcessing();
         }
-        
+
         function showSuccess(message) {
             document.getElementById('status').className = 'status success';
             document.getElementById('status').innerText = message;
@@ -331,19 +387,19 @@ HTML = """
         hideProcessing();
         return;
     }
-    
+
     isProcessingMove = true;
     const nextMove = moveQueue.shift();
-    
+
     // Show processing indicator
-    showProcessing(`Sending move: ${nextMove}...`);
-    
+    showProcessing(`Sending move: ${nextMove.san}...`);
+
     // Send immediately - queue handles the sequencing
     actuallySendMoveToServer(nextMove);
 }
-        
-        function queueMove(moveSan) {
-            moveQueue.push(moveSan);
+
+        function queueMove(moveData) {
+            moveQueue.push(moveData);
             if (!isProcessingMove) {
                 processMoveQueue();
             }
@@ -356,24 +412,26 @@ HTML = """
         // Initialize chess.js game and board
         var game = new Chess();
         var board = null;
-        
+
     function onDragStart(source, piece, position, orientation) {
     // Do not allow moves if game is over, it's not the player's turn, or we're processing a move
     if (game.game_over()) return false;
     if (isProcessingMove) return false;
     if (pendingPromotion) return false; // Prevent dragging while promotion modal is open
-    
+
     if ((game.turn() === 'w' && piece.search(/^b/) !== -1) ||
         (game.turn() === 'b' && piece.search(/^w/) !== -1)) {
         return false;
     }
 }
-
-     function onDrop(source, target) {
+function onDrop(source, target) {
+    if (source === target) {
+        return 'snapback';
+    }
     // Check if this is a pawn promotion move
     var piece = game.get(source);
     var isPromotion = false;
-    
+
     if (piece && piece.type === 'p') {
         // Check if pawn is moving to promotion rank
         if ((piece.color === 'w' && target[1] === '8') || 
@@ -381,7 +439,7 @@ HTML = """
             isPromotion = true;
         }
     }
-    
+
     if (isPromotion) {
         // Store the move details and show promotion modal
         pendingPromotion = {
@@ -391,11 +449,18 @@ HTML = """
         };
         document.getElementById('promotionModal').style.display = 'block';
         document.getElementById('modalOverlay').style.display = 'block';
-        return 'snapback'; // Don't make the move yet
+        return 'snapback';
     }
-    
-    // Regular move (not promotion)
-    return makeMoveWithPromotion(source, target, 'q'); // default queen for backward compatibility
+
+    // Regular move (not promotion) - pass null for promotion
+    ensureSyncAndMakeMove(source, target, null);
+    return 'snapback';
+}
+
+// Make move with specified promotion piece
+function makeMoveWithPromotion(source, target, promotion) {
+    ensureSyncAndMakeMove(source, target, promotion);
+    return 'snapback';
 }
 
 // Make move with specified promotion piece
@@ -409,24 +474,33 @@ function makeMoveWithPromotion(source, target, promotion) {
     if (move === null) return 'snapback';
 
     updateBoard();
-    
+
     var moveSan = move.san;
-    
+    var moveUci = move.from + move.to;
+    if (promotion) {
+        moveUci += promotion;
+    }
+
     // Ensure castling notation is correct
     if (moveSan === 'O-O' || moveSan === 'O-O-O') {
         // Keep as is
     } else if (moveSan === '0-0' || moveSan === '0-0-0') {
         moveSan = moveSan.replace(/0/g, 'O');
     }
-    
-    sendMoveToServer(moveSan);
+
+    // Send both SAN (for display) and UCI (for Lucas Chess)
+    queueMove({
+        san: moveSan,
+        uci: moveUci
+    });
     return null;
 }
 
 // Handle promotion choice
 function promotePiece(piece) {
     if (pendingPromotion) {
-        makeMoveWithPromotion(pendingPromotion.from, pendingPromotion.to, piece);
+        // Pass the selected promotion piece
+        ensureSyncAndMakeMove(pendingPromotion.from, pendingPromotion.to, piece);
         pendingPromotion = null;
     }
     document.getElementById('promotionModal').style.display = 'none';
@@ -461,29 +535,30 @@ function cancelPromotion() {
         let allMoves = [];
 console.log('Initial allMoves:', allMoves);
 
-            function sendMoveToServer(moveSan) {
+            function sendMoveToServer(moveData) {
     // Ensure castling notation is correct before queueing
-    if (moveSan === 'O-O' || moveSan === 'O-O-O') {
+    if (moveData.san === 'O-O' || moveData.san === 'O-O-O') {
         // Already correct
-    } else if (moveSan === '0-0') {
-        moveSan = 'O-O';
-    } else if (moveSan === '0-0-0') {
-        moveSan = 'O-O-O';
-    } else if (moveSan.toLowerCase() === 'o-o') {
-        moveSan = 'O-O';
-    } else if (moveSan.toLowerCase() === 'o-o-o') {
-        moveSan = 'O-O-O';
+    } else if (moveData.san === '0-0') {
+        moveData.san = 'O-O';
+    } else if (moveData.san === '0-0-0') {
+        moveData.san = 'O-O-O';
+    } else if (moveData.san.toLowerCase() === 'o-o') {
+        moveData.san = 'O-O';
+    } else if (moveData.san.toLowerCase() === 'o-o-o') {
+        moveData.san = 'O-O-O';
     }
-    queueMove(moveSan);
+    queueMove(moveData);
 }
-        
- function actuallySendMoveToServer(moveSan) {
+
+ function actuallySendMoveToServer(moveData) {
     // Clear any pending promotion
     pendingPromotion = null;
     document.getElementById('promotionModal').style.display = 'none';
     document.getElementById('modalOverlay').style.display = 'none';
-    
-    // Final castling notation check before sending
+
+    // Final castling notation check for display SAN
+    var moveSan = moveData.san;
     if (moveSan === '0-0-0' || moveSan.toLowerCase() === 'o-o-o') {
         moveSan = 'O-O-O';
         console.log('Normalized queenside castling to:', moveSan);
@@ -491,23 +566,27 @@ console.log('Initial allMoves:', allMoves);
         moveSan = 'O-O';
         console.log('Normalized kingside castling to:', moveSan);
     }
-    
+
     fetch('/focus', {method: 'POST'})
     .then(() => {
         return new Promise(resolve => setTimeout(resolve, 50));
     })
     .then(() => {
+        // Send UCI move to server
         return fetch('/send', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({move: moveSan})
+            body: JSON.stringify({
+                uci: moveData.uci,
+                san: moveSan  // Include SAN for display/validation
+            })
         });
     })
     .then(response => response.json())
     .then(data => {
         if (data.valid) {
             showSuccess(data.message);
-            
+
             // **CRITICAL: Wait a moment for Lucas to update, then FULL SYNC**
             setTimeout(() => {
                 fetch('/full_state').then(r => r.json()).then(state => {
@@ -532,7 +611,7 @@ console.log('Initial allMoves:', allMoves);
 }
 function undoMove() {
     showProcessing('Undoing move...');
-    
+
     fetch('/focus', {method: 'POST'})
     .then(() => {
         return new Promise(resolve => setTimeout(resolve, 50));
@@ -606,27 +685,79 @@ class ChessGame:
         self.board.reset()
         self.move_history.clear()
 
-    def make_move(self, san_str):
-        """Try to make a move in SAN format. Returns (success, san_move, player, error_msg)"""
+    def make_move_from_uci(self, uci_str, san_str=None):
+        """Try to make a move in UCI format. Returns (success, san_move, player, error_msg)"""
         try:
-            # Clean up the move string
-            san_str = san_str.strip()
+            # Clean up the UCI string
+            uci_str = uci_str.strip().lower()
+            print(f"Processing UCI move: '{uci_str}'")
+
+            # Handle case where we get 'e4' instead of 'e2e4'
+            if len(uci_str) == 2 and uci_str[0] in 'abcdefgh' and uci_str[1] in '12345678':
+                # This is just a target square - we need to figure out the from square
+                # For pawn moves, we can try to determine based on whose turn it is
+                target_square = uci_str
+                print(f"Received short notation: {target_square}, trying to determine from square")
+
+                if self.board.turn == chess.WHITE:
+                    # Try from the row below
+                    from_square = target_square[0] + '2'
+                    uci_str = from_square + target_square
+                else:
+                    # Try from the row above
+                    from_square = target_square[0] + '7'
+                    uci_str = from_square + target_square
+                print(f"Converted to UCI: {uci_str}")
 
             # Handle castling
-            if san_str.lower() == 'o-o':
-                san_str = 'O-O'
-            elif san_str.lower() == 'o-o-o':
-                san_str = 'O-O-O'
+            if uci_str in ['o-o', '0-0']:
+                if self.board.turn == chess.WHITE:
+                    uci_str = 'e1g1'
+                else:
+                    uci_str = 'e8g8'
+            elif uci_str in ['o-o-o', '0-0-0']:
+                if self.board.turn == chess.WHITE:
+                    uci_str = 'e1c1'
+                else:
+                    uci_str = 'e8c8'
 
-            # Parse the SAN move
-            move = self.board.parse_san(san_str)
+            print(f"Final UCI to process: '{uci_str}'")
 
-            # Double-check if move is legal
+            # Parse UCI move
+            from_square = chess.parse_square(uci_str[0:2])
+            to_square = chess.parse_square(uci_str[2:4])
+
+            # Check for promotion
+            promotion = None
+            if len(uci_str) >= 5:
+                promotion_map = {'q': chess.QUEEN, 'r': chess.ROOK, 'b': chess.BISHOP, 'n': chess.KNIGHT}
+                promotion = promotion_map.get(uci_str[4])
+
+            # Create the move
+            move = chess.Move(from_square, to_square, promotion=promotion)
+
+            # Check if move is legal
             if move not in self.board.legal_moves:
-                return False, None, None, "Illegal move"
+                print(f"Move {move} not in legal moves list")
+                # Try to find a matching pawn move
+                if len(uci_str) == 4 and uci_str[0] in 'abcdefgh' and uci_str[1] in '27' and uci_str[
+                    2] in 'abcdefgh' and uci_str[3] in '34':
+                    # This might be a pawn double move - let's try to find it in legal moves
+                    for legal_move in self.board.legal_moves:
+                        if legal_move.from_square == from_square and legal_move.to_square == to_square:
+                            move = legal_move
+                            print(f"Found matching legal move: {move}")
+                            break
+                    else:
+                        return False, None, None, "Illegal move"
+                else:
+                    return False, None, None, "Illegal move"
 
-            # Get the normalized SAN representation
-            san_move = self.board.san(move)
+            # Get the SAN representation for display
+            if san_str:
+                san_move = san_str
+            else:
+                san_move = self.board.san(move)
 
             # Determine player before moving
             player = 'white' if self.board.turn == chess.WHITE else 'black'
@@ -642,13 +773,10 @@ class ChessGame:
 
             return True, san_move, player, None
 
-        except chess.IllegalMoveError:
-            return False, None, None, "Illegal move"
-        except chess.InvalidMoveError:
-            return False, None, None, "Invalid move format"
-        except chess.AmbiguousMoveError:
-            return False, None, None, "Ambiguous move"
         except Exception as e:
+            print(f"Error processing move: {e}")
+            import traceback
+            traceback.print_exc()
             return False, None, None, str(e)
 
     def undo(self):
@@ -748,14 +876,14 @@ class LucasChessController:
         time.sleep(0.5)  # Give Lucas Chess time to process
         return True
 
-    def play_move(self, san_str):
+    def play_move(self, uci_str, san_str=None):
         # Log the move being attempted
-        print(f"LucasController.play_move received: '{san_str}'")
+        print(f"LucasController.play_move received UCI: '{uci_str}', SAN: '{san_str}'")
 
-        # First validate the move using chess_game
-        success, san_move, player, error = self.chess_game.make_move(san_str)
+        # First validate the move using chess_game with UCI format
+        success, san_move, player, error = self.chess_game.make_move_from_uci(uci_str, san_str)
         if not success:
-            return False, error or f"Illegal move: {san_str}", None, None
+            return False, error or f"Illegal move: {uci_str}", None, None
 
         # Now send to Lucas Chess
         if not self.focus_lucas():
@@ -773,28 +901,11 @@ class LucasChessController:
             rect = win32gui.GetWindowRect(hwnd)
             x, y, w, h = rect
 
-            # Handle castling moves - now using notation instead of mouse clicks
-            if san_move == 'O-O':
-                print("Sending kingside castling")
-                # For white kingside castling: ke1g1
-                # For black kingside castling: ke8g8
-                if player == 'white':
-                    pyautogui.write('ke1g1', interval=0.1)
-                else:
-                    pyautogui.write('ke8g8', interval=0.1)
-                time.sleep(0.1)
-                pyautogui.press('enter')
-
-            elif san_move == 'O-O-O':
-                print("Sending queenside castling")
-                # For white queenside castling: ke1c1
-                # For black queenside castling: ke8c8
-                if player == 'white':
-                    pyautogui.write('ke1c1', interval=0.1)
-                else:
-                    pyautogui.write('ke8c8', interval=0.1)
-                time.sleep(0.1)
-                pyautogui.press('enter')
+            # Send UCI move directly
+            print(f"Sending UCI move: {uci_str}")
+            pyautogui.write(uci_str, interval=0.1)
+            time.sleep(0.1)
+            pyautogui.press('enter')
 
         return True, f"Played: {san_move}", san_move, player
 
@@ -815,6 +926,7 @@ class LucasChessController:
                 time.sleep(0.1)
         except KeyboardInterrupt:
             print("\n\n👋 Stopped")
+
     def undo_last_move(self):
         success, also_remove, move_undone = self.chess_game.undo()
         if not success:
@@ -848,6 +960,8 @@ def board_state():
         'history': chess_game.get_history(),
         'turn': 'white' if chess_game.board.turn == chess.WHITE else 'black'
     })
+
+
 @app.route('/full_state', methods=['GET'])
 def full_state():
     """Return complete game state"""
@@ -860,29 +974,17 @@ def full_state():
 
 @app.route('/send', methods=['POST'])
 def send():
-    san_str = request.get_json().get('move', '').strip()
-    if not san_str:
-        return jsonify({'valid': False, 'message': 'No move provided'})
+    data = request.get_json()
+    uci_str = data.get('uci', '').strip()
+    san_str = data.get('san', '').strip()
 
-    # Convert any variant of castling to the standard Lucas format
-    original_san = san_str
+    if not uci_str:
+        return jsonify({'valid': False, 'message': 'No UCI move provided'})
 
-    # First, normalize the string for comparison
-    normalized = san_str.upper().replace('0', 'O')
-
-    # Handle queenside castling (O-O-O)
-    if normalized in ['O-O-O', 'OOO']:
-        san_str = 'O-O-O'
-        print(f"Castling queenside detected: {original_san} -> {san_str}")
-    # Handle kingside castling (O-O)
-    elif normalized in ['O-O', 'OO']:
-        san_str = 'O-O'
-        print(f"Castling kingside detected: {original_san} -> {san_str}")
-
-    success, msg, played_move, player = lucas.play_move(san_str)
+    success, msg, played_move, player = lucas.play_move(uci_str, san_str)
 
     # Log what happened for debugging
-    print(f"Move sent: {san_str}, Success: {success}, Message: {msg}")
+    print(f"UCI move sent: {uci_str}, Success: {success}, Message: {msg}")
 
     return jsonify({
         'valid': success,
@@ -890,6 +992,7 @@ def send():
         'move': played_move,
         'player': player
     })
+
 
 @app.route('/undo', methods=['POST'])
 def undo():
@@ -900,10 +1003,12 @@ def undo():
         'also_remove': also_remove
     })
 
+
 # Add this route to serve static files
 @app.route('/static/<path:filename>')
 def serve_static(filename):
     return send_from_directory('static', filename)
+
 
 @app.route('/focus', methods=['POST'])
 def focus():
@@ -972,14 +1077,14 @@ if __name__ == '__main__':
 
     ip = get_ip()
     print("\n" + "=" * 50)
-    print("CHESS CONTROLLER WITH VISUAL BOARD")
+    print("CHESS CONTROLLER WITH VISUAL BOARD (UCI for Lucas Chess)")
     print("=" * 50)
     print(f"\nOpen this URL on your phone/tablet: http://{ip}:5000")
     print("\nYou can now:")
     print("  • Drag pieces on the board (scrolling disabled)")
-    print("  • Type moves in SAN format (e.g., e4, Nf3, O-O, exd5)")
+    print("  • Moves are displayed in SAN format in the web interface")
+    print("  • Moves are sent to Lucas Chess in UCI format")
     print("  • All moves are validated with full chess rules")
-    print("  • Legal moves are sent to Lucas Chess automatically")
     print("\nPress Ctrl+C to stop")
     print("=" * 50)
 
